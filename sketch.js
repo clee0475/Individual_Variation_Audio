@@ -145,7 +145,7 @@ class IntersectionBlock {
     }
   }
 
-  draw2D(colors) {
+draw2D(colors) {
     noStroke();
     
     if (this.colorIndex < 3) {
@@ -153,60 +153,124 @@ class IntersectionBlock {
     } else {
       fill(...colors.accent);
     }
+
+    let displaySize = (this.baseSize + this.height) * this.pulseScale;
     
-    // Apply pulse scale
-    let displaySize = this.size * this.pulseScale;
     rect(this.x - displaySize / 2, this.y - displaySize / 2, displaySize, displaySize);
-  }
+}
 
   draw3D(colors) {
     push();
     
-    // Isometric projection
-    let isoX = this.x - this.y;
-    let isoY = (this.x + this.y) / 2 - this.height;
+    // 1. Translate the drawing origin to the 2D center position (this.x, this.y)
+    // This (0,0) now represents the center of the base of our building on the 2D grid.
+    translate(this.x, this.y); 
     
-    // Building color
+    // 2. Define isometric constants
+    const ISOMETRIC_ANGLE_FACTOR = 0.5; // You can adjust this for different isometric perspectives
+    
+    let halfSize = this.size / 2;
+    let currentHeight = this.height; // Building height
+    const s = this.pulseScale; // Apply pulse scale
+    
+    // Define the 2D coordinates for the BASE corners relative to the translated origin (0,0)
+    // These points represent the bottom footprint of the building on the 'ground' plane.
+    let baseCorners2D = [
+        createVector(-halfSize, -halfSize), // Top-left of the footprint (NW)
+        createVector( halfSize, -halfSize), // Top-right of the footprint (NE)
+        createVector( halfSize,  halfSize), // Bottom-right of the footprint (SE)
+        createVector(-halfSize,  halfSize)  // Bottom-left of the footprint (SW)
+    ];
+
+    // Project these 2D base corners to isometric 2D points on the ground plane
+    let projectedBasePoints = baseCorners2D.map(p => {
+        let isoX = (p.x - p.y) * ISOMETRIC_ANGLE_FACTOR * s;
+        let isoY = (p.x + p.y) * ISOMETRIC_ANGLE_FACTOR * 0.5 * s;
+        return createVector(isoX, isoY);
+    });
+
+    // Define the TOP points by shifting the projected base points UPWARDS by 'currentHeight'
+    // Remember: in p5.js, decreasing Y goes UP.
+    let projectedTopPoints = projectedBasePoints.map(p => createVector(p.x, p.y - currentHeight));
+
+
+    // -----------------------------------------------------
+    // Draw 3D Structure - Prioritize drawing from back to front
+    // This order helps with correct overlapping.
+    // -----------------------------------------------------
+    
+    noStroke();
+
+    // 1. Back Faces (These are the sides facing away from the viewer, often partially obscured)
+    //    We'll assume the view is from slightly above and in front of the bottom-right (SE) corner.
+    //    So, the NW and NE faces might be partially visible as 'back' faces.
+
+    // Back-Left Side (between NW_base and NE_base) - assuming this is a "rear" side
+    // Points: projectedBasePoints[0], projectedBasePoints[1], projectedTopPoints[1], projectedTopPoints[0]
+    if (currentHeight > 0) { // Only draw if building has height
+      let darkerColor = colors.primary[this.colorIndex] || colors.accent;
+      fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7);
+      beginShape();
+      vertex(projectedBasePoints[0].x, projectedBasePoints[0].y); // NW Base
+      vertex(projectedBasePoints[1].x, projectedBasePoints[1].y); // NE Base
+      vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);   // NE Top
+      vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);   // NW Top
+      endShape(CLOSE);
+    }
+    
+    // Back-Right Side (between NW_base and SW_base) - assuming this is another "rear" side
+    // Points: projectedBasePoints[0], projectedBasePoints[3], projectedTopPoints[3], projectedTopPoints[0]
+    if (currentHeight > 0) {
+      let darkerColor = colors.primary[this.colorIndex] || colors.accent; // Can use the same shade
+      fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7);
+      beginShape();
+      vertex(projectedBasePoints[0].x, projectedBasePoints[0].y); // NW Base
+      vertex(projectedBasePoints[3].x, projectedBasePoints[3].y); // SW Base
+      vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);   // SW Top
+      vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);   // NW Top
+      endShape(CLOSE);
+    }
+
+    // 2. Front Faces (These are the sides facing towards the viewer)
+
+    // Front-Left Side (between SW_base and SE_base) - this is the most prominent "left" side
+    // Points: projectedBasePoints[3], projectedBasePoints[2], projectedTopPoints[2], projectedTopPoints[3]
+    if (currentHeight > 0) {
+       let darkerColor = colors.primary[this.colorIndex] || colors.accent;
+       fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7); // Darker shade
+       beginShape();
+       vertex(projectedBasePoints[3].x, projectedBasePoints[3].y); // SW Base
+       vertex(projectedBasePoints[2].x, projectedBasePoints[2].y); // SE Base
+       vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);   // SE Top
+       vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);   // SW Top
+       endShape(CLOSE);
+    }
+
+    // Front-Right Side (between NE_base and SE_base) - this is the most prominent "right" side
+    // Points: projectedBasePoints[1], projectedBasePoints[2], projectedTopPoints[2], projectedTopPoints[1]
+    if (currentHeight > 0) {
+      let darkestColor = colors.primary[this.colorIndex] || colors.accent;
+      fill(darkestColor[0] * 0.5, darkestColor[1] * 0.5, darkestColor[2] * 0.5); // Darkest shade
+      beginShape();
+      vertex(projectedBasePoints[1].x, projectedBasePoints[1].y); // NE Base
+      vertex(projectedBasePoints[2].x, projectedBasePoints[2].y); // SE Base
+      vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);   // SE Top
+      vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);   // NE Top
+      endShape(CLOSE);
+    }
+    
+    // 3. Top Face - Brightest (always drawn last to ensure it's on top)
     if (this.colorIndex < 3) {
       fill(...colors.primary[this.colorIndex]);
     } else {
       fill(...colors.accent);
     }
-    
-    let displaySize = this.size * this.pulseScale;
-    
-    // Draw top face
-    noStroke();
     beginShape();
-    vertex(isoX, isoY);
-    vertex(isoX + displaySize / 2, isoY + displaySize / 4);
-    vertex(isoX, isoY + displaySize / 2);
-    vertex(isoX - displaySize / 2, isoY + displaySize / 4);
+    vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);
+    vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);
+    vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);
+    vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);
     endShape(CLOSE);
-    
-    // Draw left face (darker)
-    if (this.height > 5) {
-      let darkerColor = colors.primary[this.colorIndex] || colors.accent;
-      fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7);
-      beginShape();
-      vertex(isoX - displaySize / 2, isoY + displaySize / 4);
-      vertex(isoX, isoY + displaySize / 2);
-      vertex(isoX, isoY + displaySize / 2 + this.height);
-      vertex(isoX - displaySize / 2, isoY + displaySize / 4 + this.height);
-      endShape(CLOSE);
-    }
-    
-    // Draw right face (even darker)
-    if (this.height > 5) {
-      let darkestColor = colors.primary[this.colorIndex] || colors.accent;
-      fill(darkestColor[0] * 0.5, darkestColor[1] * 0.5, darkestColor[2] * 0.5);
-      beginShape();
-      vertex(isoX, isoY + displaySize / 2);
-      vertex(isoX + displaySize / 2, isoY + displaySize / 4);
-      vertex(isoX + displaySize / 2, isoY + displaySize / 4 + this.height);
-      vertex(isoX, isoY + displaySize / 2 + this.height);
-      endShape(CLOSE);
-    }
     
     pop();
   }
@@ -269,7 +333,7 @@ function initializeBlocks(verticalPositions, horizontalPositions) {
         }
         
         // Assign different frequency bands to different buildings
-        let frequencyBand = floor(map(blockIndex, 0, 25, 0, 512));
+        let frequencyBand = floor(map(blockIndex, 0, 25, 350, 0));
         blocks.push(new IntersectionBlock(x, y, size, frequencyBand));
         blockIndex++;
       }
@@ -337,9 +401,9 @@ function draw() {
   background(...colors.bg);
   
   // Update sound analysis for all blocks
-  if (audioLoaded && is3DMode && song && song.isPlaying()) {
+  if (audioLoaded && song && song.isPlaying()) {
     blocks.forEach(block => {
-      block.updateSound();
+      block.updateSound(); 
     });
   }
   
