@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Broadway Boogie Woogie In Motion - Audio</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background-color: #f0f0f0;
+      font-family: Arial, sans-serif;
+    }
+    h1 {
+      margin: 10px 0;
+      color: #333;
+    }
+    #canvas-container {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      margin: 20px 0;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 12px 30px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    button:hover {
+      transform: scale(1.05);
+    }
+    .day-mode { background-color: #999999; color: white; }
+    .night-mode { background-color: #999999; color: white; }
+    .mode-3d { background-color: #999999; color: white; }
+    .mode-2d { background-color: #999999; color: white; }
+    .audio-btn { background-color: #999999; color: white; }
+    .info {
+      margin-top: 20px;
+      text-align: center;
+      color: #666;
+      max-width: 500px;
+    }
+    #status {
+      margin-top: 10px;
+      color: #2196f3;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Broadway Boogie Woogie In Motion</h1>
+  <p style="color: #666; margin: 5px 0;">3D Sound Reactive</p>
+  
+  <div id="canvas-container"></div>
+  
+  <div class="controls">
+    <button id="mode-btn" class="day-mode">🌙 Night Mode</button>
+    <button id="view-btn" class="mode-2d">🗽 3D Mode</button>
+    <button id="audio-btn" class="audio-btn">▶️ Play Audio</button>
+  </div>
+  
+  <div id="status">Initializing...</div>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
