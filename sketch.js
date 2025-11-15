@@ -1,5 +1,5 @@
 // Color schemes
-const COLOR_SCHEMES = {
+const COLORS = {
   day: {
     bg: [220, 220, 220],
     primary: [[221, 1, 0], [244, 196, 48], [0, 72, 186]],
@@ -14,459 +14,411 @@ const COLOR_SCHEMES = {
   }
 };
 
-// Audio file path
-const AUDIO_FILE = '501.mp3'; 
-
-// Global variables
+// Global state
 let isNightMode = false;
 let is3DMode = false;
-let audioLoaded = false;
+let song, fft, amplitude;
 let gridLines = [];
 let blocks = [];
+let audioLoaded = false;
 
-// Audio variables
-let song;
-let fft;
-let amplitude;
+// Helper functions
+const isPlaying = () => audioLoaded && song && song.isPlaying();
+const colors = () => isNightMode ? COLORS.night : COLORS.day;
 
 // GridLine class
 class GridLine {
   constructor(x1, y1, x2, y2, isVertical) {
-    this.x1 = x1;
-    this.y1 = y1;
-    this.x2 = x2;
-    this.y2 = y2;
-    this.isVertical = isVertical;
-    this.thickness = 12;
-    this.cubes = [];
-    this.initCubes();
+    Object.assign(this, { x1, y1, x2, y2, isVertical });
+    this.cubes = this.createCubes();
   }
 
-  initCubes() {
+  createCubes() {
     const length = this.isVertical ? this.y2 - this.y1 : this.x2 - this.x1;
-    const numCubes = Math.floor(length / 30);
-    
-    for (let i = 0; i < numCubes; i++) {
-      const pos = Math.random() * length;
-      const size = random(6, 14);
-      const speed = random(0.5, 2) * (random() > 0.5 ? 1 : -1);
-      const colorIndex = floor(random(3));
-      
-      this.cubes.push({
-        pos: pos,
-        size: size,
-        speed: speed,
-        colorIndex: colorIndex
-      });
-    }
+    return Array.from({ length: floor(length / 30) }, () => ({
+      pos: random(length),
+      baseSize: random(6, 14),
+      speed: random(0.5, 2) * (random() > 0.5 ? 1 : -1),
+      colorIndex: floor(random(3)),
+      freqBand: floor(random(50, 400)),
+      scale: 1.0,
+      trail: []
+    }));
   }
 
   update() {
     const length = this.isVertical ? this.y2 - this.y1 : this.x2 - this.x1;
     
     this.cubes.forEach(cube => {
-      cube.pos += cube.speed;
-      
-      if (cube.speed > 0 && cube.pos > length) {
-        cube.pos = 0;
-      } else if (cube.speed < 0 && cube.pos < 0) {
-        cube.pos = length;
-      }
-    });
-  }
-
-  draw() {
-    const colors = isNightMode ? COLOR_SCHEMES.night : COLOR_SCHEMES.day;
-    
-    // Draw line
-    stroke(...colors.grid);
-    strokeWeight(this.thickness);
-    line(this.x1, this.y1, this.x2, this.y2);
-    
-    // Draw moving cubes
-    noStroke();
-    this.cubes.forEach(cube => {
-      fill(...colors.primary[cube.colorIndex]);
-      
-      if (this.isVertical) {
-        const y = this.y1 + cube.pos;
-        const x = this.x1 - cube.size / 2;
-        rect(x, y, cube.size, cube.size);
+      // FIX 1: Cars only have audio reactivity (size change/trails) in 2D mode.
+      if (!is3DMode && isPlaying()) { 
+        const spectrum = fft.analyze();
+        const level = amplitude.getLevel();
+        const targetScale = map(spectrum[cube.freqBand] || 0, 0, 255, 1.0, 3.5) + level * 1.5;
+        cube.scale = lerp(cube.scale, targetScale, 0.3);
+        
+        const pos = this.isVertical 
+          ? { x: this.x1, y: this.y1 + cube.pos }
+          : { x: this.x1 + cube.pos, y: this.y1 };
+        cube.trail.push({ ...pos, size: cube.baseSize * cube.scale, alpha: 255 });
+        
+        if (cube.trail.length > 50) cube.trail.shift();
+        cube.trail.forEach((t, i) => t.alpha = map(i, 0, cube.trail.length - 1, 20, 255));
       } else {
-        const x = this.x1 + cube.pos;
-        const y = this.y1 - cube.size / 2;
-        rect(x, y, cube.size, cube.size);
+        // In 3D mode (or 2D/paused), scale remains 1.0, and trail is NOT drawn/updated.
+        cube.scale = lerp(cube.scale, 1.0, 0.1); 
+        // FIX: Ensure no trails are built in 3D mode or when paused.
+        cube.trail = []; 
+      }
+      
+      // Car movement is independent of mode/music
+      cube.pos += cube.speed;
+      if ((cube.speed > 0 && cube.pos > length) || (cube.speed < 0 && cube.pos < 0)) {
+        cube.pos = cube.speed > 0 ? 0 : length;
+        cube.trail = [];
       }
     });
   }
-}
 
-// IntersectionBlock class with 3D capabilities
-class IntersectionBlock {
-  constructor(x, y, size, frequencyBand) {
-    this.x = x;
-    this.y = y;
-    this.baseSize = size;
-    this.size = size;
-    this.colorIndex = floor(random(4));
-    this.frequencyBand = frequencyBand;
-    this.height = 0;
-    this.targetHeight = 0;
-    this.pulseScale = 1.0;
-  }
-
-  updateSound() {
-    if (!audioLoaded || !fft || !song.isPlaying()) return;
-    
-    // Get frequency spectrum
-    let spectrum = fft.analyze();
-    
-    // Get amplitude for pulsing
-    let level = amplitude.getLevel();
-    
-    // Map frequency band to building height (0-200 pixels)
-    let freqValue = spectrum[this.frequencyBand] || 0;
-    this.targetHeight = map(freqValue, 0, 255, 0, 200);
-    
-    // Smooth height transition
-    this.height = lerp(this.height, this.targetHeight, 0.2);
-    
-    // Pulse effect based on amplitude
-    this.pulseScale = 1.0 + level * 0.3;
-  }
-
-  draw() {
-    const colors = isNightMode ? COLOR_SCHEMES.night : COLOR_SCHEMES.day;
-    
+draw() {
+    const c = colors();
+        
     if (is3DMode) {
-      this.draw3D(colors);
+      // Z-position for the center of the road structure 
+      const roadZ = 5; 
+      // Car Z-position
+      const trafficZ = 10; 
+
+      // 1. Draw traffic cubes
+      this.cubes.forEach(cube => {
+        const color = c.primary[cube.colorIndex];
+        // In 3D mode, scale is 1.0, so size is just baseSize
+        const size = cube.baseSize; 
+        noStroke();
+                
+        // Draw trail (will be empty due to FIX 1)
+        cube.trail.forEach((t, i) => {
+          push();
+          fill(color[0], color[1], color[2], t.alpha * 0.6);
+          translate(t.x, t.y, trafficZ); 
+          box(t.size, t.size, t.size);
+          pop();
+        });
+                
+        // Draw main cube
+        push();
+        fill(...color);
+        if (this.isVertical) {
+          const y = this.y1 + cube.pos;
+          translate(this.x1, y, trafficZ);
+        } else {
+          const x = this.x1 + cube.pos;
+          translate(x, this.y1, trafficZ);
+        }
+        box(size, size, size);
+        pop();
+      });
+
+
+      // 2. Draw streets
+      push();
+      fill(...c.grid);
+      noStroke();
+            
+      if (this.isVertical) {
+        const midX = this.x1;
+        const midY = (this.y1 + this.y2) / 2;
+        const length = this.y2 - this.y1;
+        translate(midX, midY, roadZ); 
+        box(12, length, 8);
+      } else {
+        const midX = (this.x1 + this.x2) / 2;
+        const midY = this.y1;
+        const length = this.x2 - this.x1;
+        translate(midX, midY, roadZ); 
+        box(length, 12, 8);
+      }
+      pop();
+            
     } else {
-      this.draw2D(colors);
+      // 2D mode - Existing logic (Audio reactivity is ENABLED here)
+      push();
+      
+      const drawCubes = () => {
+        // Draw traffic cubes (cars) and their trails
+        this.cubes.forEach(cube => {
+          const color = c.primary[cube.colorIndex];
+          noStroke(); 
+          
+          // Draw trail
+          cube.trail.forEach(t => {
+            fill(color[0], color[1], color[2], t.alpha * 0.6);
+            const x = this.isVertical ? t.x - t.size / 2 : t.x;
+            const y = this.isVertical ? t.y : t.y - t.size / 2;
+            rect(x, y, t.size, t.size);
+          });
+          
+          // Draw main cube
+          fill(...color);
+          const size = cube.baseSize * cube.scale;
+          const x = this.isVertical ? this.x1 - size / 2 : this.x1 + cube.pos;
+          const y = this.isVertical ? this.y1 + cube.pos : this.y1 - size / 2;
+          rect(x, y, size, size);
+        });
+      };
+      
+      const drawRoads = () => {
+        // Draw street lines
+        noFill(); 
+        stroke(...c.grid);
+        strokeWeight(12);
+        line(this.x1, this.y1, this.x2, this.y2);
+      };
+      
+      if (isPlaying()) {
+        // Music ON: Cars underneath 
+        drawCubes();
+        drawRoads();
+      } else {
+        // Music OFF: Cars on top 
+        drawRoads();
+        drawCubes();
+      }
+      
+      pop();
     }
-  }
-
-draw2D(colors) {
-    noStroke();
-    
-    if (this.colorIndex < 3) {
-      fill(...colors.primary[this.colorIndex]);
-    } else {
-      fill(...colors.accent);
-    }
-
-    let displaySize = (this.baseSize + this.height) * this.pulseScale;
-    
-    rect(this.x - displaySize / 2, this.y - displaySize / 2, displaySize, displaySize);
-}
-
-  draw3D(colors) {
-    push();
-    
-    // 1. Translate the drawing origin to the 2D center position (this.x, this.y)
-    // This (0,0) now represents the center of the base of our building on the 2D grid.
-    translate(this.x, this.y); 
-    
-    // 2. Define isometric constants
-    const ISOMETRIC_ANGLE_FACTOR = 0.5; // You can adjust this for different isometric perspectives
-    
-    let halfSize = this.size / 2;
-    let currentHeight = this.height; // Building height
-    const s = this.pulseScale; // Apply pulse scale
-    
-    // Define the 2D coordinates for the BASE corners relative to the translated origin (0,0)
-    // These points represent the bottom footprint of the building on the 'ground' plane.
-    let baseCorners2D = [
-        createVector(-halfSize, -halfSize), // Top-left of the footprint (NW)
-        createVector( halfSize, -halfSize), // Top-right of the footprint (NE)
-        createVector( halfSize,  halfSize), // Bottom-right of the footprint (SE)
-        createVector(-halfSize,  halfSize)  // Bottom-left of the footprint (SW)
-    ];
-
-    // Project these 2D base corners to isometric 2D points on the ground plane
-    let projectedBasePoints = baseCorners2D.map(p => {
-        let isoX = (p.x - p.y) * ISOMETRIC_ANGLE_FACTOR * s;
-        let isoY = (p.x + p.y) * ISOMETRIC_ANGLE_FACTOR * 0.5 * s;
-        return createVector(isoX, isoY);
-    });
-
-    // Define the TOP points by shifting the projected base points UPWARDS by 'currentHeight'
-    // Remember: in p5.js, decreasing Y goes UP.
-    let projectedTopPoints = projectedBasePoints.map(p => createVector(p.x, p.y - currentHeight));
-
-
-    // -----------------------------------------------------
-    // Draw 3D Structure - Prioritize drawing from back to front
-    // This order helps with correct overlapping.
-    // -----------------------------------------------------
-    
-    noStroke();
-
-    // 1. Back Faces (These are the sides facing away from the viewer, often partially obscured)
-    //    We'll assume the view is from slightly above and in front of the bottom-right (SE) corner.
-    //    So, the NW and NE faces might be partially visible as 'back' faces.
-
-    // Back-Left Side (between NW_base and NE_base) - assuming this is a "rear" side
-    // Points: projectedBasePoints[0], projectedBasePoints[1], projectedTopPoints[1], projectedTopPoints[0]
-    if (currentHeight > 0) { // Only draw if building has height
-      let darkerColor = colors.primary[this.colorIndex] || colors.accent;
-      fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7);
-      beginShape();
-      vertex(projectedBasePoints[0].x, projectedBasePoints[0].y); // NW Base
-      vertex(projectedBasePoints[1].x, projectedBasePoints[1].y); // NE Base
-      vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);   // NE Top
-      vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);   // NW Top
-      endShape(CLOSE);
-    }
-    
-    // Back-Right Side (between NW_base and SW_base) - assuming this is another "rear" side
-    // Points: projectedBasePoints[0], projectedBasePoints[3], projectedTopPoints[3], projectedTopPoints[0]
-    if (currentHeight > 0) {
-      let darkerColor = colors.primary[this.colorIndex] || colors.accent; // Can use the same shade
-      fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7);
-      beginShape();
-      vertex(projectedBasePoints[0].x, projectedBasePoints[0].y); // NW Base
-      vertex(projectedBasePoints[3].x, projectedBasePoints[3].y); // SW Base
-      vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);   // SW Top
-      vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);   // NW Top
-      endShape(CLOSE);
-    }
-
-    // 2. Front Faces (These are the sides facing towards the viewer)
-
-    // Front-Left Side (between SW_base and SE_base) - this is the most prominent "left" side
-    // Points: projectedBasePoints[3], projectedBasePoints[2], projectedTopPoints[2], projectedTopPoints[3]
-    if (currentHeight > 0) {
-       let darkerColor = colors.primary[this.colorIndex] || colors.accent;
-       fill(darkerColor[0] * 0.7, darkerColor[1] * 0.7, darkerColor[2] * 0.7); // Darker shade
-       beginShape();
-       vertex(projectedBasePoints[3].x, projectedBasePoints[3].y); // SW Base
-       vertex(projectedBasePoints[2].x, projectedBasePoints[2].y); // SE Base
-       vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);   // SE Top
-       vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);   // SW Top
-       endShape(CLOSE);
-    }
-
-    // Front-Right Side (between NE_base and SE_base) - this is the most prominent "right" side
-    // Points: projectedBasePoints[1], projectedBasePoints[2], projectedTopPoints[2], projectedTopPoints[1]
-    if (currentHeight > 0) {
-      let darkestColor = colors.primary[this.colorIndex] || colors.accent;
-      fill(darkestColor[0] * 0.5, darkestColor[1] * 0.5, darkestColor[2] * 0.5); // Darkest shade
-      beginShape();
-      vertex(projectedBasePoints[1].x, projectedBasePoints[1].y); // NE Base
-      vertex(projectedBasePoints[2].x, projectedBasePoints[2].y); // SE Base
-      vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);   // SE Top
-      vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);   // NE Top
-      endShape(CLOSE);
-    }
-    
-    // 3. Top Face - Brightest (always drawn last to ensure it's on top)
-    if (this.colorIndex < 3) {
-      fill(...colors.primary[this.colorIndex]);
-    } else {
-      fill(...colors.accent);
-    }
-    beginShape();
-    vertex(projectedTopPoints[0].x, projectedTopPoints[0].y);
-    vertex(projectedTopPoints[1].x, projectedTopPoints[1].y);
-    vertex(projectedTopPoints[2].x, projectedTopPoints[2].y);
-    vertex(projectedTopPoints[3].x, projectedTopPoints[3].y);
-    endShape(CLOSE);
-    
-    pop();
   }
 }
 
-// Initialize grid lines
-function initializeGridLines() {
-  const verticalPositions = [100, 180, 280, 360, 450, 520];
-  verticalPositions.forEach(x => {
-    gridLines.push(new GridLine(x, 50, x, 550, true));
-  });
-  
-  const horizontalPositions = [80, 160, 250, 330, 420, 500];
-  horizontalPositions.forEach(y => {
-    gridLines.push(new GridLine(50, y, 550, y, false));
-  });
-  
-  return { verticalPositions, horizontalPositions };
+// Block class
+class Block {
+  constructor(x, y, size, freqBand) {
+    Object.assign(this, { x, y, size, freqBand });
+    this.colorIndex = floor(random(4));
+    
+    // FIX 1: Buildings start with a safe, flat height of 0.
+    // Random height for 3D is now applied ONLY in toggle3D().
+    this.height = 0; 
+    this.pulse = 1.0;
+  }
+
+  update() {
+    if (isPlaying()) {
+      const spectrum = fft.analyze();
+      const targetHeight = map(spectrum[this.freqBand] || 0, 0, 255, 0, 350); 
+      this.height = lerp(this.height, targetHeight, 0.2);
+      this.pulse = 1.0 + amplitude.getLevel() * 0.6;
+    } else {
+      // FIX 2: When paused, the building holds its current height.
+      // We no longer want it to shrink back to 0 at all.
+      this.pulse = lerp(this.pulse, 1.0, 0.2); 
+    }
+  }
+
+draw() {
+    const c = colors();
+    const color = this.colorIndex < 3 ? c.primary[this.colorIndex] : c.accent;
+    if (is3DMode) {
+      push();
+      noStroke();
+      // Buildings are centered at Z=height/2
+      translate(this.x, this.y, this.height / 2); 
+      fill(...color);
+      box(this.size * this.pulse, this.size * this.pulse, this.height);
+      pop();
+    } else {
+      // 2D mode: The height will reflect the random start but the pulse will shrink.
+      // Since you only care about 3D, we leave this as-is.
+      push();
+      noStroke();
+      fill(...color);
+      const s = (this.size + this.height * 0.3) * this.pulse;
+      rect(this.x - s / 2, this.y - s / 2, s, s);
+      pop();
+    }
+  }
 }
 
-// Initialize blocks using a city map grid system
-function initializeBlocks(verticalPositions, horizontalPositions) {
+// Initialize scene
+function initScene() {
+  const vPos = [100, 180, 280, 360, 450, 520];
+  const hPos = [80, 160, 250, 330, 420, 500];
+  
+  gridLines = []; // Ensure old lines are cleared
+  blocks = []; // Ensure old blocks are cleared
+
+  vPos.forEach(x => gridLines.push(new GridLine(x, 50, x, 550, true)));
+  hPos.forEach(y => gridLines.push(new GridLine(50, y, 550, y, false)));
+  
   const cityMap = [
     [1, 0, 1, 1, 0],
     [0, 1, 0, 1, 1],
     [1, 1, 0, 0, 1],
     [0, 0, 1, 1, 0],
-    [1, 1, 1, 0, 1],
+    [1, 1, 1, 0, 1]
   ];
   
-  const roadThickness = 12;
-  const roadHalf = roadThickness / 2;
-  
-  let blockIndex = 0;
-  
-  for (let i = 0; i < cityMap.length; i++) {
-    for (let j = 0; j < cityMap[i].length; j++) {
-      if (cityMap[i][j] === 1) {
-        const leftX = verticalPositions[j];
-        const rightX = verticalPositions[j + 1];
-        const topY = horizontalPositions[i];
-        const bottomY = horizontalPositions[i + 1];
-        
+  let idx = 0;
+  cityMap.forEach((row, i) => {
+    row.forEach((cell, j) => {
+      if (cell === 1) {
         const size = random(30, 60);
         const corner = floor(random(4));
-        let x, y;
+        const half = 6;
         
-        if (corner === 0) {
-          x = leftX + roadHalf + size / 2;
-          y = topY + roadHalf + size / 2;
-        } else if (corner === 1) {
-          x = rightX - roadHalf - size / 2;
-          y = topY + roadHalf + size / 2;
-        } else if (corner === 2) {
-          x = leftX + roadHalf + size / 2;
-          y = bottomY - roadHalf - size / 2;
-        } else {
-          x = rightX - roadHalf - size / 2;
-          y = bottomY - roadHalf - size / 2;
-        }
+        const x = corner % 2 === 0 
+          ? vPos[j] + half + size / 2 
+          : vPos[j + 1] - half - size / 2;
+        const y = corner < 2 
+          ? hPos[i] + half + size / 2 
+          : hPos[i + 1] - half - size / 2;
         
-        // Assign different frequency bands to different buildings
-        let frequencyBand = floor(map(blockIndex, 0, 25, 350, 0));
-        blocks.push(new IntersectionBlock(x, y, size, frequencyBand));
-        blockIndex++;
+        blocks.push(new Block(x, y, size, floor(map(idx, 0, 25, 350, 0))));
+        idx++;
       }
-    }
-  }
+    });
+  });
 }
 
-// p5.js preload function - loads audio before setup
+// p5.js preload
 function preload() {
-  const statusElement = document.getElementById('status');
-
-  // Load the audio file
-  song = loadSound(AUDIO_FILE, 
+  song = loadSound('501.mp3',
     () => {
-      // Success callback
-      console.log('Audio loaded successfully!');
-      statusElement.textContent = 'Audio ready! Press Play to start.';
-      statusElement.style.color = '#666';
       audioLoaded = true;
+      document.getElementById('status').textContent = 'Audio ready! Press Play to start.';
     },
-    (err) => {
-      // Error callback
-      console.error('Error loading audio:', err);
-      statusElement.textContent = 'Error loading audio. Please check the file path.';
-      statusElement.style.color = '#9b2921ff';
+    () => {
+      document.getElementById('status').textContent = 'Error loading audio file.';
+      document.getElementById('status').style.color = '#e74c3c';
     }
   );
 }
 
-// p5.js setup function
+// p5.js setup
 function setup() {
-  let canvas = createCanvas(600, 600);
-  canvas.parent('canvas-container');
+  createCanvas(600, 600).parent('canvas-container');
   frameRate(60);
+  initScene();
   
-  const { verticalPositions, horizontalPositions } = initializeGridLines();
-  initializeBlocks(verticalPositions, horizontalPositions);
-  
-  // Initialize audio analysis tools
   fft = new p5.FFT(0.8, 512);
   amplitude = new p5.Amplitude();
-  
-  // Connect audio to analyzers
   if (song) {
     fft.setInput(song);
     amplitude.setInput(song);
   }
 
-  const modeBtn = document.getElementById('mode-btn');
-  const viewBtn = document.getElementById('view-btn');
-  const audioBtn = document.getElementById('audio-btn');
-  
-  if (modeBtn && viewBtn && audioBtn) { // Make sure the elements exist
-    modeBtn.addEventListener('click', toggleColorMode);
-    viewBtn.addEventListener('click', toggle3DMode);
-    audioBtn.addEventListener('click', toggleAudio);
-  } else {
-    console.error("One or more buttons were not found in the DOM.");
-  }
+  document.getElementById('mode-btn').onclick = toggleMode;
+  document.getElementById('view-btn').onclick = toggle3D;
+  document.getElementById('audio-btn').onclick = toggleAudio;
 }
 
-// p5.js draw function
+// p5.js draw
 function draw() {
-  const colors = isNightMode ? COLOR_SCHEMES.night : COLOR_SCHEMES.day;
-  background(...colors.bg);
-  
-  // Update sound analysis for all blocks
-  if (audioLoaded && song && song.isPlaying()) {
-    blocks.forEach(block => {
-      block.updateSound(); 
-    });
+  const c = colors();
+  background(...c.bg);
+
+  // Updates must run before drawing
+  blocks.forEach(b => b.update());
+  gridLines.forEach(l => l.update());
+
+  if (is3DMode) {
+    // START ISOLATION BLOCK
+    push(); 
+    
+    // 1. Shift the 3D origin from the center to the top-left
+    translate(-width / 2, -height / 2); 
+    
+    // Ambient Light: Brightens everything equally, ensuring shadows aren't pitch black.
+    // Increased intensity to 100 (out of 255) for a strong base illumination.
+    ambientLight(100); 
+
+    // Directional Light: Simulates the sun, giving defined shadows and highlights.
+    // Bright white light (255, 255, 255) shining down and from the front-right.
+    directionalLight(255, 255, 255, 0.5, 0.5, -1);
+
+    // 2. Set the camera view. (Angle maintained)
+    camera(300, 700, 500, 300, 300, 0, 0, 1, 0); 
+  } 
+
+  gridLines.forEach(l => l.draw());
+  blocks.forEach(b => b.draw());
+
+  if (is3DMode) {
+    pop(); // END ISOLATION BLOCK 
   }
-  
-  // Update and draw grid lines
-  gridLines.forEach(line => {
-    line.update();
-    line.draw();
-  });
-  
-  // Draw intersection blocks
-  blocks.forEach(block => {
-    block.draw();
-  });
 }
 
-// Toggle color mode function
-function toggleColorMode() {
+// Toggle color mode
+function toggleMode() {
   isNightMode = !isNightMode;
   const btn = document.getElementById('mode-btn');
-  
-  if (isNightMode) {
-    btn.textContent = '☀️ Day Mode';
-    btn.className = 'night-mode';
-  } else {
-    btn.textContent = '🌙 Night Mode';
-    btn.className = 'day-mode';
-  }
+  btn.textContent = isNightMode ? '☀️ Day Mode' : '🌙 Night Mode';
+  btn.className = isNightMode ? 'night-mode' : 'day-mode';
 }
 
 // Toggle 3D mode
-function toggle3DMode() {
+function toggle3D() {
   is3DMode = !is3DMode;
-  const btn = document.getElementById('view-btn');
-  
-  if (is3DMode) {
-    btn.textContent = '🗺️ 2D Mode';
-    btn.className = 'mode-3d';
-  } else {
-    btn.textContent = '🗽 3D Mode';
-    btn.className = 'mode-2d';
+
+  const currentCanvas = select('canvas');
+  if (currentCanvas) {
+    currentCanvas.remove(); 
   }
+
+  const canvas = is3DMode ? createCanvas(600, 600, WEBGL) : createCanvas(600, 600);
+  canvas.parent('canvas-container'); 
+  
+  // Clear and regenerate the city. All blocks are created with height=0.
+  gridLines = [];
+  blocks = [];
+  initScene();
+
+  if (is3DMode) {
+    // FIX A: Applying a cap to the random starting height (now 200 instead of 300).
+    blocks.forEach(b => {
+      // Starting height will be between 50 and 200.
+      b.height = random(50, 200); 
+    });
+  } else {
+    // When entering 2D mode, we ensure the height is 0.
+    blocks.forEach(b => {
+      b.height = 0;
+    });
+
+    // Ensures 2D canvas is centered.
+    resetMatrix();   
+    translate(0, 0); 
+  }
+
+  // Re-assign audio inputs
+  if (song) {
+    fft.setInput(song);
+    amplitude.setInput(song);
+  }
+  
+  // Update button
+  const btn = document.getElementById('view-btn');
+  btn.textContent = is3DMode ? '🗺️ 2D Mode' : '🗽 3D Mode';
+  btn.className = is3DMode ? 'mode-3d' : 'mode-2d';
+  
+  redraw();
 }
 
-// Toggle audio playback
+// Toggle audio
 function toggleAudio() {
-  if (!audioLoaded || !song) {
-    alert('Audio is not loaded yet. Please wait...');
+  if (!audioLoaded) {
+    console.log('Audio not loaded yet!'); 
     return;
   }
   
   const btn = document.getElementById('audio-btn');
-  
   if (song.isPlaying()) {
     song.pause();
     btn.textContent = '▶️ Play Audio';
-    
-    // Reset all building heights
-    blocks.forEach(block => {
-      block.height = 0;
-      block.targetHeight = 0;
-    });
+    btn.className = 'play';
   } else {
     song.play();
     btn.textContent = '⏸️ Pause Audio';
+    btn.className = 'pause';
   }
 }
