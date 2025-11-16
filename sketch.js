@@ -42,7 +42,8 @@ class GridLine {
       colorIndex: floor(random(3)),
       freqBand: floor(random(50, 400)),
       scale: 1.0,
-      trail: []
+      trail: [],
+      trailUpdateCounter: 0 // Add counter for trail updates
     }));
   }
 
@@ -57,18 +58,24 @@ class GridLine {
         const targetScale = map(spectrum[cube.freqBand] || 0, 0, 255, 1.0, 3.5) + level * 1.5;
         cube.scale = lerp(cube.scale, targetScale, 0.3);
         
-        const pos = this.isVertical 
-          ? { x: this.x1, y: this.y1 + cube.pos }
-          : { x: this.x1 + cube.pos, y: this.y1 };
-        cube.trail.push({ ...pos, size: cube.baseSize * cube.scale, alpha: 255 });
-        
-        if (cube.trail.length > 50) cube.trail.shift();
-        cube.trail.forEach((t, i) => t.alpha = map(i, 0, cube.trail.length - 1, 20, 255));
+        // Only update trail every 2 frames to reduce lag
+        cube.trailUpdateCounter++;
+        if (cube.trailUpdateCounter % 2 === 0) {
+          const pos = this.isVertical 
+            ? { x: this.x1, y: this.y1 + cube.pos }
+            : { x: this.x1 + cube.pos, y: this.y1 };
+          cube.trail.push({ ...pos, size: cube.baseSize * cube.scale, alpha: 255 });
+          
+          // Reduce max trail length from 50 to 30
+          if (cube.trail.length > 30) cube.trail.shift();
+          cube.trail.forEach((t, i) => t.alpha = map(i, 0, cube.trail.length - 1, 20, 255));
+        }
       } else {
         // In 3D mode (or 2D/paused), scale remains 1.0, and trail is NOT drawn/updated.
         cube.scale = lerp(cube.scale, 1.0, 0.1); 
         // FIX: Ensure no trails are built in 3D mode or when paused.
         cube.trail = []; 
+        cube.trailUpdateCounter = 0;
       }
       
       // Car movement is independent of mode/music
@@ -141,46 +148,55 @@ draw() {
       pop();
             
     } else {
-      // 2D mode - Existing logic (Audio reactivity is ENABLED here)
+      // 2D mode with WEBGL - simplified drawing (lighting creates the glow)
       push();
       
       const drawCubes = () => {
         // Draw traffic cubes (cars) and their trails
         this.cubes.forEach(cube => {
           const color = c.primary[cube.colorIndex];
-          noStroke(); 
-          
-          // Draw trail
-          cube.trail.forEach(t => {
-            fill(color[0], color[1], color[2], t.alpha * 0.6);
-            const x = this.isVertical ? t.x - t.size / 2 : t.x;
-            const y = this.isVertical ? t.y : t.y - t.size / 2;
-            rect(x, y, t.size, t.size);
-          });
-          
-          // Draw main cube
-          fill(...color);
           const size = cube.baseSize * cube.scale;
           const x = this.isVertical ? this.x1 - size / 2 : this.x1 + cube.pos;
           const y = this.isVertical ? this.y1 + cube.pos : this.y1 - size / 2;
+          
+          noStroke(); 
+          
+          // Draw trail - only if there are trail points
+          if (cube.trail.length > 0) {
+            cube.trail.forEach(t => {
+              fill(color[0], color[1], color[2], t.alpha * 0.6);
+              const tx = this.isVertical ? t.x - t.size / 2 : t.x;
+              const ty = this.isVertical ? t.y : t.y - t.size / 2;
+              rect(tx, ty, t.size, t.size);
+            });
+          }
+          
+          // Draw main cube - lighting will add the glow automatically
+          fill(...color);
           rect(x, y, size, size);
         });
       };
       
       const drawRoads = () => {
-        // Draw street lines
-        noFill(); 
-        stroke(...c.grid);
+        // Draw street lines with semi-transparency for glow effect
+        noFill();
+        
+        if (isPlaying()) {
+          // Very transparent when playing - use much lower alpha
+          stroke(c.grid[0], c.grid[1], c.grid[2], 60);
+        } else {
+          stroke(c.grid[0], c.grid[1], c.grid[2], 255);
+        }
         strokeWeight(12);
         line(this.x1, this.y1, this.x2, this.y2);
       };
       
       if (isPlaying()) {
-        // Music ON: Cars underneath 
+        // Music ON: Roads on top (so cars appear underneath)
         drawCubes();
         drawRoads();
       } else {
-        // Music OFF: Cars on top 
+        // Music OFF: Cars on top (so cars appear above roads)
         drawRoads();
         drawCubes();
       }
@@ -296,8 +312,12 @@ function preload() {
 
 // p5.js setup
 function setup() {
-  createCanvas(600, 600).parent('canvas-container');
+  createCanvas(600, 600, WEBGL).parent('canvas-container'); // Start with WEBGL
   frameRate(60);
+  
+  // Optimize WEBGL rendering
+  pixelDensity(1); // Reduce pixel density for better performance
+  
   initScene();
   
   fft = new p5.FFT(0.8, 512);
@@ -338,14 +358,36 @@ function draw() {
 
     // 2. Set the camera view. (Angle maintained)
     camera(300, 700, 500, 300, 300, 0, 0, 1, 0); 
-  } 
+  } else {
+    // 2D mode with WEBGL - add lighting for glow effect
+    push();
+    translate(-width / 2, -height / 2);
+    
+    // Disable depth test so draw order matters (not depth)
+    push();
+    // @ts-ignore
+    drawingContext.disable(drawingContext.DEPTH_TEST);
+    
+    // Enable transparency blending
+    blendMode(BLEND);
+    
+    // Soft ambient light for subtle glow
+    ambientLight(100);
+    
+    // Pure white directional light to create the white halo on cars
+    directionalLight(255, 255, 255, 0.3, 0.3, -1);
+    
+    // Use orthographic camera for 2D view
+    ortho(-width/2, width/2, -height/2, height/2, 0, 1000);
+  }
 
   gridLines.forEach(l => l.draw());
   blocks.forEach(b => b.draw());
 
-  if (is3DMode) {
-    pop(); // END ISOLATION BLOCK 
+  if (!is3DMode) {
+    pop(); // Close depth test disable
   }
+  pop(); // Always pop since we always push now
 }
 
 // Toggle color mode
@@ -365,7 +407,8 @@ function toggle3D() {
     currentCanvas.remove(); 
   }
 
-  const canvas = is3DMode ? createCanvas(600, 600, WEBGL) : createCanvas(600, 600);
+  // Always use WEBGL for consistent lighting effects
+  const canvas = createCanvas(600, 600, WEBGL);
   canvas.parent('canvas-container'); 
   
   // Clear and regenerate the city. All blocks are created with height=0.
@@ -384,10 +427,6 @@ function toggle3D() {
     blocks.forEach(b => {
       b.height = 0;
     });
-
-    // Ensures 2D canvas is centered.
-    resetMatrix();   
-    translate(0, 0); 
   }
 
   // Re-assign audio inputs
